@@ -18,7 +18,7 @@ HTML = """<!DOCTYPE html>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-         background: #f5f5f5; color: #222; padding: 2rem; max-width: 900px; margin: 0 auto; }
+         background: #f5f5f5; color: #222; padding: 2rem; max-width: 960px; margin: 0 auto; }
   h1 { margin-bottom: 1.5rem; font-size: 1.4rem; }
   form { background: #fff; padding: 1.5rem; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.1);
          display: flex; flex-wrap: wrap; gap: 1rem; align-items: end; margin-bottom: 2rem; }
@@ -34,7 +34,13 @@ HTML = """<!DOCTYPE html>
   #status { font-size: .85rem; color: #666; margin-bottom: 1rem; min-height: 1.2em; }
   #results { display: flex; flex-direction: column; gap: 1.5rem; }
   .card { background: #fff; padding: 1.2rem 1.5rem; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
-  .card h2 { font-size: 1.1rem; margin-bottom: .6rem; color: #0066cc; }
+  .card h2 { font-size: 1.2rem; margin-bottom: .8rem; color: #0066cc; }
+  .key-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+               gap: .6rem; margin-bottom: 1rem; padding: .8rem; background: #f8fafc;
+               border-radius: 6px; border: 1px solid #e2e8f0; }
+  .kf { display: flex; flex-direction: column; }
+  .kf-label { font-size: .7rem; text-transform: uppercase; letter-spacing: .05em; color: #888; font-weight: 600; }
+  .kf-value { font-size: .95rem; font-weight: 600; color: #1a202c; }
   .field { margin-bottom: .35rem; font-size: .9rem; }
   .field b { display: inline-block; min-width: 160px; color: #555; }
   .section { margin-top: .8rem; padding-top: .6rem; border-top: 1px solid #eee; }
@@ -43,6 +49,9 @@ HTML = """<!DOCTYPE html>
   .entry { margin-left: 1rem; margin-bottom: .3rem; font-size: .85rem; color: #444; }
   .entry-type { font-weight: 600; color: #666; }
   .error { color: #c00; font-weight: 600; }
+  details { margin-top: .6rem; }
+  details summary { cursor: pointer; font-size: .9rem; font-weight: 600; color: #555; }
+  details summary:hover { color: #0066cc; }
 </style>
 </head>
 <body>
@@ -97,34 +106,62 @@ form.addEventListener('submit', async (e) => {
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
-function renderCompany(c) {
-  let html = '<div class="card">';
-  html += '<h2>' + esc(c.name) + '</h2>';
-  html += field('Court', c.court);
-  html += field('Register', c.register_num);
-  html += field('State', c.state);
-  html += field('Status', c.statusCurrent);
+function extractState(court) {
+  // Court field starts with the state name, e.g. "Saxony   District court Leipzig HRB 32007"
+  if (!court) return null;
+  const m = court.match(/^(.+?)\\s{2,}/);
+  return m ? m[1].trim() : null;
+}
 
-  if (c.history && c.history.length) {
-    html += '<div class="section"><h3>History</h3>';
-    c.history.forEach(h => { html += '<div class="person">' + esc(h[0]) + ' &mdash; ' + esc(h[1]) + '</div>'; });
-    html += '</div>';
+function extractFoundingYear(detail) {
+  if (!detail) return null;
+  // Best source: earliest "Gesellschaftsvertrag vom DD.MM.YYYY" in register entries
+  if (detail.register_entries) {
+    for (const e of detail.register_entries) {
+      const m = (e.text || '').match(/Gesellschaftsvertrag\\s+vom\\s+\\d{2}\\.\\d{2}\\.(\\d{4})/);
+      if (m) return m[1];
+    }
   }
+  // Fallback: articles of association date
+  if (detail.articles_of_association_date) return detail.articles_of_association_date.split('-')[0];
+  return null;
+}
 
+function formatCapital(cap) {
+  if (!cap) return null;
+  const num = parseFloat(cap.amount);
+  if (isNaN(num)) return cap.amount + ' ' + cap.currency;
+  return num.toLocaleString('de-DE', { minimumFractionDigits: 2 }) + ' ' + cap.currency;
+}
+
+function renderCompany(c) {
   const d = c.detail;
+  const state = extractState(c.court) || c.state;
+  const foundingYear = extractFoundingYear(d);
+  const legalForm = (d && d.legal_form) || null;
+
+  let html = '<div class="card">';
+  html += '<h2>' + esc(d && d.name ? d.name : c.name) + '</h2>';
+
+  // Key facts grid — the four target fields
+  html += '<div class="key-facts">';
+  html += kf('Company Name', d && d.name ? d.name : c.name);
+  html += kf('Legal Form', legalForm);
+  html += kf('Founding Year', foundingYear);
+  html += kf('Headquarters State', state);
+  html += '</div>';
+
+  // Additional SI detail
   if (d) {
-    html += '<div class="section"><h3>Detail (SI)</h3>';
-    html += field('Legal Form', d.legal_form);
-    html += field('Seat', d.seat);
     if (d.address) {
       const a = d.address;
       const parts = [a.street, [a.postal_code, a.city].filter(Boolean).join(' ')].filter(Boolean);
       html += field('Address', parts.join(', '));
     }
-    if (d.capital) html += field('Capital', d.capital.amount + ' ' + d.capital.currency);
+    if (d.capital) html += field('Capital', formatCapital(d.capital));
     html += field('Business Purpose', d.business_purpose);
-    html += field('Representation', d.representation_rules);
-    html += field('Articles Date', d.articles_of_association_date);
+    html += field('Register', c.register_num);
+    html += field('Status', c.statusCurrent);
     html += field('Last Entry', d.last_entry_date);
 
     if (d.directors && d.directors.length) {
@@ -145,17 +182,43 @@ function renderCompany(c) {
       });
       html += '</div>';
     }
+
+    // Collapsible sections for verbose data
+    if (d.representation_rules) {
+      html += '<details><summary>Representation Rules</summary>';
+      html += '<div class="field" style="margin-top:.4rem">' + esc(d.representation_rules) + '</div></details>';
+    }
+    if (c.history && c.history.length) {
+      html += '<details><summary>History (' + c.history.length + ')</summary>';
+      c.history.forEach(h => { html += '<div class="person">' + esc(h[0]) + ' &mdash; ' + esc(h[1]) + '</div>'; });
+      html += '</details>';
+    }
     if (d.register_entries && d.register_entries.length) {
-      html += '<div class="section"><h3>Register Entries</h3>';
+      html += '<details><summary>Register Entries (' + d.register_entries.length + ')</summary>';
       d.register_entries.forEach(e => {
         html += '<div class="entry"><span class="entry-type">[' + esc(e.type || '') + ']</span> ' + esc(e.text || '') + '</div>';
       });
+      html += '</details>';
+    }
+  } else {
+    // No detail — show basic search result fields
+    html += field('Court', c.court);
+    html += field('Register', c.register_num);
+    html += field('Status', c.statusCurrent);
+    if (c.history && c.history.length) {
+      html += '<div class="section"><h3>History</h3>';
+      c.history.forEach(h => { html += '<div class="person">' + esc(h[0]) + ' &mdash; ' + esc(h[1]) + '</div>'; });
       html += '</div>';
     }
-    html += '</div>';
   }
+
   html += '</div>';
   return html;
+}
+
+function kf(label, val) {
+  return '<div class="kf"><span class="kf-label">' + esc(label) + '</span>'
+       + '<span class="kf-value">' + esc(val || '\u2014') + '</span></div>';
 }
 
 function field(label, val) {
@@ -219,6 +282,10 @@ class Handler(BaseHTTPRequestHandler):
         print('[%s] %s' % (self.log_date_time_string(), fmt % args))
 
 
+class ReusableHTTPServer(HTTPServer):
+    allow_reuse_address = True
+
+
 if __name__ == '__main__':
     print('Handelsregister Web UI running at http://localhost:%d' % PORT)
-    HTTPServer(('', PORT), Handler).serve_forever()
+    ReusableHTTPServer(('', PORT), Handler).serve_forever()
